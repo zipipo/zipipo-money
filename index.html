@@ -265,6 +265,12 @@
     </div>
 
     <div class="pix" style="padding:11px; margin-bottom:12px;">
+      <label class="tiny">이번 달 전체 예산 (원)</label>
+      <input id="setPot" inputmode="numeric" placeholder="480000" style="margin-top:6px; font-family:'Galmuri14',monospace;">
+      <div class="muted tiny" style="margin-top:6px;">바꾸면 카테고리 한도들이 지금 비율대로 자동 조정돼요</div>
+    </div>
+
+    <div class="pix" style="padding:11px; margin-bottom:12px;">
       <label class="tiny">카테고리 &amp; 한도 (원)</label>
       <button class="btn sky" id="aiDesignBtn" style="width:100%; margin-top:8px;">AI로 카테고리·한도 자동 설계</button>
       <div class="muted tiny" style="margin-top:6px;">내 지출 기록을 보고 Gemini가 카테고리와 한도를 새로 짜줘요 (API 키 필요)</div>
@@ -396,10 +402,23 @@ function resolveMD(mo,d){
 }
 function matchCategory(text){
   const t=text.toLowerCase();
-  for(const kw in S.learned){ if(kw.length>=2 && t.includes(kw)) return {catId:S.learned[kw],sub:null}; }
-  for(const c of S.categories){ for(const kw of (c.keywords||[])){ if(kw && t.includes(kw.toLowerCase())){
-    let sub=null; for(const sb of (c.subs||[])){ if(t.includes(sb.split('·')[0])){sub=sb;break;} } return {catId:c.id,sub}; } } }
-  return {catId:'etc',sub:null};
+  let best=null;
+  /* learned words first (but still compete by length) */
+  for(const kw in S.learned){
+    if(kw.length>=2 && t.includes(kw) && (!best||kw.length>best.len)) best={catId:S.learned[kw],len:kw.length+0.5,sub:null};
+  }
+  /* all categories compete; the longest (most specific) keyword wins */
+  for(const c of S.categories){
+    for(const raw of (c.keywords||[])){
+      const k=String(raw).toLowerCase().trim();
+      if(k.length<2) continue;                    /* 한 글자 키워드는 무시 (오분류 원인) */
+      if(t.includes(k) && (!best||k.length>best.len)){
+        let sub=null; for(const sb of (c.subs||[])){ if(t.includes(sb.split('·')[0])){sub=sb;break;} }
+        best={catId:c.id,len:k.length,sub};
+      }
+    }
+  }
+  return best?{catId:best.catId,sub:best.sub}:{catId:'etc',sub:null};
 }
 function parseOne(raw, forcedDate){
   let s=raw.trim(); if(!s) return null;
@@ -776,6 +795,7 @@ function recategorize(t){ const pick=prompt(`"${t.item}" 카테고리 바꾸기\
     save(); renderAll(); reactPet('happy'); } }
 
 function renderSettings(){ document.getElementById('setPetName').value=S.settings.petName||''; document.getElementById('setApiKey').value=S.settings.apiKey||'';
+  const potInp=document.getElementById('setPot'); if(potInp) potInp.value=S.settings.totalPot||totalBudget();
   const tg=document.getElementById('rebalToggle');
   if(tg){ const on=S.settings.autoRebalance!==false; tg.textContent=on?'ON':'OFF'; tg.style.background=on?'var(--accent)':'var(--paper)'; }
   const el=document.getElementById('catEditList'); el.innerHTML='';
@@ -919,7 +939,7 @@ async function aiDesignCategories(){
 관심사: 화장/옷, 문구/스티커, 다이소, 카페/디저트, 영화/야구.
 4~9개 카테고리를 JSON 배열로만 반환해. 설명·마크다운 금지.
 형식: [{"name":"식비","budget":230000,"keywords":["점심","배달","마트"]}]
-규칙: budget 합계는 정확히 ${pot}. keywords는 한국어 소문자 5~15개(지출 문장에서 매칭할 단어).`;
+규칙: budget 합계는 정확히 ${pot}. keywords는 반드시 2글자 이상의 구체적인 한국어 명사(음식명·상호명·품목명)만 5~15개. "것","돈","살"같은 일반 단어 금지. 서로 다른 카테고리에 같은 키워드 중복 금지.`;
     const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
       {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});
     const j=await r.json(); let txt=j?.candidates?.[0]?.content?.parts?.[0]?.text||'';
@@ -927,14 +947,29 @@ async function aiDesignCategories(){
     const arr=JSON.parse(txt);
     if(!Array.isArray(arr)||!arr.length) throw new Error('bad');
     const syms=['\u25CF','\u2665','\u266A','\u25A0','\u25B6','\u25C6','\u2661','\u271A','\u2605'];
+    const seen=new Set();
     const cats=arr.map((o,i)=>({id:'ai'+Date.now()+'_'+i, name:String(o.name||'카테고리'), sym:syms[i%syms.length],
-      budget:Math.max(0,parseInt(o.budget)||0), subs:[], keywords:(o.keywords||[]).map(k=>String(k).toLowerCase())}));
+      budget:Math.max(0,parseInt(o.budget)||0), subs:[],
+      keywords:(o.keywords||[]).map(k=>String(k).toLowerCase().trim())
+        .filter(k=>k.length>=2 && k.length<=12 && !seen.has(k) && (seen.add(k),true))  /* 2글자 미만·중복 제거 */
+    }));
     /* 합계 보정 */
     const sum=cats.reduce((a,c)=>a+c.budget,0); if(sum>0&&sum!==pot) cats[0].budget+=pot-sum;
     cats.push({id:'etc',name:'기타(미분류)',sym:'\u25C7',budget:0,subs:[],keywords:[]});
     if(!confirm('AI가 짠 새 카테고리로 바꿀까?\n\n'+cats.filter(c=>c.budget>0).map(c=>`${c.name} ${won(c.budget)}`).join('\n')+'\n\n(기존 기록은 새 카테고리로 자동 재분류돼)')) return;
+    /* 기존 카테고리 이름 기억해두기 (재분류 안전장치용) */
+    const oldName={}; S.categories.forEach(c=>{ oldName[c.id]=(c.name||'').replace(/\(.*?\)/g,'').trim(); });
     S.categories=cats; S.learned={};
-    S.tx.forEach(t=>{ if(t.type==='expense'){ const m=matchCategory(t.raw||t.item||''); t.catId=m.catId; t.sub=m.sub; } });
+    S.tx.forEach(t=>{ if(t.type!=='expense') return;
+      const m=matchCategory(t.raw||t.item||'');
+      if(m.catId!=='etc'){ t.catId=m.catId; t.sub=m.sub; return; }
+      /* 키워드로 못 찾으면: 기존 카테고리 이름과 비슷한 새 카테고리로 */
+      const on=oldName[t.catId]||'';
+      let f=null;
+      if(on.length>=2){ const key2=on.slice(0,2);
+        f=cats.find(c=>c.id!=='etc'&&(c.name.includes(key2)||on.includes(c.name.slice(0,2)))); }
+      t.catId=f?f.id:'etc'; t.sub=null;
+    });
     save(); renderAll(); reactPet('happy');
     alert('완료! 예산 탭에서 새 카테고리를 확인해봐 \u2605');
   }catch(e){ console.warn(e); alert('설계에 실패했어. API 키가 맞는지 확인해줘!'); }
@@ -947,6 +982,16 @@ document.getElementById('setPetName').onchange=e=>{ S.settings.petName=e.target.
 document.getElementById('setApiKey').onchange=e=>{ S.settings.apiKey=e.target.value.trim(); save(); };
 document.getElementById('aiDesignBtn').onclick=aiDesignCategories;
 document.getElementById('rebalToggle').onclick=()=>{ S.settings.autoRebalance=!S.settings.autoRebalance; save(); renderSettings(); };
+document.getElementById('setPot').onchange=e=>{
+  const v=parseInt(e.target.value.replace(/[^\d]/g,''))||0; if(v<=0){ renderSettings(); return; }
+  const cur=totalBudget();
+  if(cur>0){
+    S.categories.forEach(c=>{ if(c.budget>0) c.budget=Math.max(500,Math.round(c.budget*v/cur/500)*500); });
+    const diff=v-totalBudget();
+    if(diff!==0){ const big=[...S.categories].filter(c=>c.budget>0).sort((a,b)=>b.budget-a.budget)[0]; if(big) big.budget=Math.max(500,big.budget+diff); }
+  }
+  S.settings.totalPot=v; save(); renderAll();
+};
 document.getElementById('addCatBtn').onclick=()=>{ const name=document.getElementById('newCatName').value.trim(); if(!name) return;
   const budget=parseInt(document.getElementById('newCatBudget').value.replace(/[^\d]/g,''))||0;
   S.categories.splice(S.categories.length-1,0,{id:'c'+Date.now(),name,sym:'\u25C6',budget,subs:[],keywords:[]});
