@@ -71,7 +71,6 @@
   .darrow{position:absolute; right:8px; bottom:4px; font-size:10px; animation:blink 1s steps(1) infinite;}
   @keyframes blink{50%{opacity:0;}}
 
-  
   /* stats */
   .stats{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px;}
   .stat{padding:10px; text-align:center;}
@@ -99,6 +98,27 @@
   .chip.amt{background:var(--accent);} .chip.type-income{background:var(--hp);} .chip.type-saving{background:var(--sky);}
   .impact{font-size:10.5px; margin-top:7px; padding:5px 7px; border:2px dotted var(--ink); background:#fff; line-height:1.5;}
   .impact.warn{background:#fff2cf;} .impact.bad{background:#ffdede; border-style:solid;}
+  .askans{margin-top:10px; padding:9px 11px; border:3px solid var(--ink); background:#fff; font-size:12px; line-height:1.65;
+    box-shadow:inset 0 0 0 2px #fff, inset 0 0 0 3px rgba(43,47,82,.08);}
+  .askans b{color:var(--pinkD);}
+  .askans.scold{background:#ffefef;} .askans.praise{background:#eefaf0;}
+
+  /* wish list */
+  .wishrow{margin-top:9px; padding:8px 9px; border:2px solid var(--ink); background:#fff; font-size:11.5px;}
+  .wishtop{display:flex; justify-content:space-between; align-items:center; gap:6px;}
+  .wishname{flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .wishday{font-size:10px; padding:1px 5px; border:2px solid var(--ink); background:var(--panel); white-space:nowrap;}
+  .wishday.ready{background:var(--accent);}
+  .wishask{margin-top:6px; font-size:11px; color:var(--pinkD);}
+  .wishbtns{display:flex; gap:6px; margin-top:7px;}
+  .wbtn{border:2px solid var(--ink); background:var(--paper); padding:4px 8px; font-size:10.5px; box-shadow:2px 2px 0 rgba(43,47,82,.25);}
+  .wbtn.buy{background:var(--accent);} .wbtn.res{background:var(--mint);}
+
+  /* report cards */
+  .report .winbody{font-size:11.5px; line-height:1.7;}
+  .report .rline{display:flex; gap:7px; padding:3px 0; align-items:flex-start;}
+  .report .rico{flex:0 0 14px; text-align:center; font-family:'Galmuri14',monospace;}
+  .report .rclose{margin-top:9px;}
 
   /* budget cards */
   .cat{padding:10px 11px; margin-bottom:9px;}
@@ -208,6 +228,7 @@
     </div>
 
     <div id="coachSlot"></div>
+    <div id="reportSlot"></div>
     <div id="suggestSlot"></div>
 
     <div class="qbox pix">
@@ -223,6 +244,24 @@
         · 수입·저금도 그냥 적어 : <b>용돈 받음 20만</b> / <b>청년도약 1만 넣었어</b>
       </div>
       <div id="previewSlot"></div>
+    </div>
+
+    <div class="qbox pix">
+      <div class="qlabel">? 살까말까 상담</div>
+      <input id="askInput" placeholder="예) 5만원 립 살까 말까..." autocomplete="off">
+      <button class="btn pink" id="askBtn" style="margin-top:8px; width:100%;">돈이에게 물어보기</button>
+      <div id="askAnswer"></div>
+    </div>
+
+    <div class="qbox pix">
+      <div class="qlabel">&#9734; 위시리스트 · 3일 쿨다운</div>
+      <input id="wishInput" placeholder="예) 조명 키링 15000" autocomplete="off">
+      <div class="row" style="margin-top:8px;">
+        <button class="btn" id="wishAddBtn">위시에 넣기</button>
+        <button class="btn mint" id="resistBtn">참았어!</button>
+      </div>
+      <div class="qexam">사고 싶으면 일단 위시에 넣어. 3일 뒤에도 갖고 싶으면 그때 사자!<br>안 사고 참은 건 "참았어!"로 기록 — 아낀 돈이 쌓여 ★</div>
+      <div id="wishList"></div>
     </div>
     <div id="savingCardSlot"></div>
   </div>
@@ -354,12 +393,13 @@ function defaultCats(){
 let S=load();
 function load(){
   try{ const raw=Store.get(KEY); if(raw) return migrate(JSON.parse(raw)); }catch(e){}
-  return { settings:{apiKey:'',petName:'돈이'}, categories:defaultCats(), learned:{}, tx:[], pet:{bornTs:Date.now()} };
+  return migrate({ settings:{apiKey:'',petName:'돈이'}, categories:defaultCats(), learned:{}, tx:[], pet:{bornTs:Date.now()} });
 }
 function migrate(p){ p.settings=p.settings||{apiKey:'',petName:'돈이'}; p.categories=p.categories||defaultCats();
   p.learned=p.learned||{}; p.tx=p.tx||[]; p.pet=p.pet||{bornTs:Date.now()};
   if(p.settings.autoRebalance===undefined) p.settings.autoRebalance=true;
   if(!p.settings.totalPot) p.settings.totalPot=p.categories.reduce((a,c)=>a+(c.budget||0),0);
+  p.wish=p.wish||[]; p.flags=p.flags||{};
   p.categories.forEach(c=>{ if(!c.sym) c.sym='\u25C6'; }); return p; }
 function save(){ Store.set(KEY, JSON.stringify(S)); }
 
@@ -807,10 +847,15 @@ function renderSettings(){ document.getElementById('setPetName').value=S.setting
     if(inp.dataset.f==='name') c.name=inp.value; else { c.budget=parseInt(inp.value.replace(/[^\d]/g,''))||0; S.settings.totalPot=totalBudget(); }
     save(); renderStats(); renderBudget(); }; });
 }
-function renderSavingCard(){ const slot=document.getElementById('savingCardSlot'); slot.innerHTML=''; const tot=savingsTotal(); if(tot<=0) return;
+function renderSavingCard(){ const slot=document.getElementById('savingCardSlot'); slot.innerHTML='';
+  const tot=savingsTotal(); const res=resistedThisMonth();
+  if(tot<=0&&res<=0) return;
   const div=document.createElement('div'); div.className='savecard pix';
-  div.innerHTML=`<div style="font-size:12px;">\u2605 지금까지 모은 돈</div><div style="font-family:'Galmuri14',monospace; font-size:22px; margin-top:4px;">${won(tot)}</div><div class="muted tiny" style="margin-top:4px;">잘하고 있어! 돈이가 뿌듯해해요 (^-^)</div>`;
-  slot.appendChild(div); }
+  let html='';
+  if(tot>0) html+=`<div style="font-size:12px;">\u2605 지금까지 모은 돈</div><div style="font-family:'Galmuri14',monospace; font-size:22px; margin-top:4px;">${won(tot)}</div>`;
+  if(res>0) html+=`<div style="font-size:12px; margin-top:${tot>0?'8px':'0'};">\u2606 이번 달 참아서 아낀 돈</div><div style="font-family:'Galmuri14',monospace; font-size:18px; margin-top:3px;">${won(res)}</div><div class="muted tiny" style="margin-top:3px;">이만큼 저금해버리면 진짜 네 돈이 돼!</div>`;
+  else if(tot>0) html+=`<div class="muted tiny" style="margin-top:4px;">잘하고 있어! 돈이가 뿌듯해해요 (^-^)</div>`;
+  div.innerHTML=html; slot.appendChild(div); }
 
 /* ---------- calendar ---------- */
 let calDate=new Date(now().getFullYear(), now().getMonth(), 1);
@@ -881,7 +926,7 @@ function showDayDetail(ds,amt){
   alert(fmtDay(ds)+' 지출 '+won(amt)+'\n\n'+list.map(t=>{const c=S.categories.find(x=>x.id===t.catId);return `· ${t.item||'지출'} ${won(t.amount)} (${c?c.name:'미분류'})`;}).join('\n'));
 }
 
-function renderAll(){ renderPet(); renderStats(); renderCoach(); renderSuggest(); renderBudget(); renderHistory(); renderCalendar(); renderSettings(); renderSavingCard(); }
+function renderAll(){ renderPet(); renderStats(); renderCoach(); renderReports(); renderSuggest(); renderBudget(); renderHistory(); renderCalendar(); renderSettings(); renderSavingCard(); renderWish(); }
 
 /* ---------- add flow ---------- */
 async function handleAdd(){ const raw=document.getElementById('quickInput').value.trim(); if(!raw) return;
@@ -910,13 +955,16 @@ function showPreview(items,raw){ const slot=document.getElementById('previewSlot
   const noB=document.createElement('button'); noB.className='btn cream'; noB.textContent='취소';
   okB.onclick=()=>{
     let selIdx=0; const selects=box.querySelectorAll('select');
+    const savedExp=[];
     good.forEach((it)=>{ let catId=null;
       if(it.type==='expense'){ const sel=selects[selIdx++]; catId=sel?sel.value:it.catId;
-        const tok=(it.item||'').split(/\s+/).map(x=>x.replace(/[^가-힣a-zA-Z]/g,'')).filter(x=>x.length>=2)[0]; if(tok&&sel) S.learned[tok]=sel.value; }
+        const tok=(it.item||'').split(/\s+/).map(x=>x.replace(/[^가-힣a-zA-Z]/g,'')).filter(x=>x.length>=2)[0]; if(tok&&sel) S.learned[tok]=sel.value;
+        savedExp.push({item:it.item, amount:it.amount, catId}); }
       S.tx.push({id:Date.now()+Math.random(),date:it.date,type:it.type,amount:it.amount,catId,sub:it.sub,item:it.item,raw:it.raw}); });
     save(); document.getElementById('quickInput').value=''; slot.innerHTML='';
     const didRebal=good.some(i=>i.type==='expense') && rebalanceBudgets(); if(didRebal) save();
-    const anyPos=good.some(i=>i.type!=='expense'); reactPet(anyPos?'happy':'eat',1500); renderAll(); };
+    const anyPos=good.some(i=>i.type!=='expense'); reactPet(anyPos?'happy':'eat',1500); renderAll();
+    judgeAndShow(savedExp); };
   noB.onclick=()=>{ slot.innerHTML=''; };
   btnRow.appendChild(okB); btnRow.appendChild(noB); box.appendChild(btnRow); slot.appendChild(box);
 }
@@ -977,8 +1025,241 @@ async function aiDesignCategories(){
   finally{ btn.disabled=false; btn.textContent=old; }
 }
 
+/* ---------- 살까말까 상담 ---------- */
+function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function askRule(q){
+  const amount=normalizeAmount(q);
+  const st=computeStatus();
+  if(amount==null) return '얼마짜리인지 같이 알려줘! (예: 5만원 립 살까?)';
+  const m=matchCategory(q);
+  const c=S.categories.find(x=>x.id===m.catId);
+  if(c && c.id!=='etc' && c.budget>0){
+    const mLeft=c.budget-spentByCat(c.id,'month');
+    const wAllow=c.budget*7/daysInMonth(), wLeft=Math.round(wAllow-spentByCat(c.id,'week'));
+    if(mLeft-amount<0) return `${c.name} 남은 예산이 ${won(Math.max(0,mLeft))}뿐이라 이건 무리야... (>_<) 위시리스트에 두고 다음 달 초에 다시 보자. 그때도 갖고 싶으면 진짜인 거야!`;
+    if(wLeft-amount<0) return `이번 달 여유는 있어(${won(mLeft)} 남음). 근데 이번 주 몫은 넘어서, 며칠만 참았다가 다음 주에 사면 깔끔해! 그래도 사면 ${c.name} ${won(mLeft-amount)} 남아.`;
+    return `사도 돼! (^-^) 사면 ${c.name} 이번 달 ${won(mLeft-amount)} 남아. 대신 오늘 다른 지출은 좀 줄이자 ★`;
+  }
+  if(amount>Math.max(0,st.left)) return `이번 달 전체 남은 돈(${won(Math.max(0,st.left))})보다 커서 지금은 말리고 싶어... 다음 달에 다시 생각해보자!`;
+  if(amount>st.todaySafe*3) return `살 수는 있는데 하루 목표(${won(st.todaySafe)})의 몇 배라 좀 부담돼. 3일만 고민해보고 그래도 생각나면 사자! 진짜 필요한 건 3일 뒤에도 필요하거든.`;
+  return `그 정도면 괜찮아! (^-^) 사고 나면 잊지 말고 위에 기록해줘 ★`;
+}
+async function askGemini(q){
+  const key=S.settings.apiKey&&S.settings.apiKey.trim(); if(!key) return null;
+  const st=computeStatus();
+  const catLines=st.cats.map(x=>`${x.c.name}:한도${x.budget} 씀${x.spent} 남음${x.left}`).join(' / ');
+  const prompt=`너는 픽셀 게임 속 절약 코치 캐릭터 '${S.settings.petName||'돈이'}'야. 한국어 반말, 다정한 말투, 3문장 이내로 짧게. 이모지 금지(★ (^-^) (>_<) 같은 텍스트 기호만 허용).
+사용자 예산 상태: 이번달 전체 ${st.budget}원 중 ${st.spent}원 씀, ${st.left}원 남음, 하루 권장 ${Math.round(st.todaySafe)}원, 이달 ${st.daysLeft}일 남음.
+카테고리별: ${catLines}
+사용자가 살까말까 고민 중이야. 남은 예산 근거로 살지/참을지/언제 살지 구체적으로 답해줘. 무조건 사지 말라고 하지 말고, 여유 있으면 기분 좋게 허락해줘.
+질문: "${q}"`;
+  try{
+    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});
+    const j=await r.json(); const txt=j?.candidates?.[0]?.content?.parts?.[0]?.text||'';
+    return txt.trim()||null;
+  }catch(e){ return null; }
+}
+async function handleAsk(){
+  const inp=document.getElementById('askInput'); const q=inp.value.trim(); if(!q) return;
+  const out=document.getElementById('askAnswer'); const btn=document.getElementById('askBtn');
+  btn.disabled=true; btn.textContent='고민중...';
+  out.innerHTML='<div class="askans">... '+escapeHtml(S.settings.petName||'돈이')+'가 예산 보면서 고민하는 중</div>';
+  reactPet('worried',2500);
+  try{
+    let ans=await askGemini(q); if(!ans) ans=askRule(q);
+    out.innerHTML='<div class="askans fadein"><b>'+escapeHtml(S.settings.petName||'돈이')+'</b> : '+escapeHtml(ans)+'</div>';
+    inp.value='';
+  } finally { btn.disabled=false; btn.textContent='돈이에게 물어보기'; }
+}
+
+/* ============================================================
+   WISH LIST (3-day cooldown) + 절약 저금통
+   ============================================================ */
+function daysBetween(a,b){ return Math.round((parseYmd(b)-parseYmd(a))/86400000); }
+function resistedThisMonth(){ return S.wish.filter(w=>w.status==='resisted'&&(w.resistDate||'').slice(0,7)===monthKey()).reduce((a,b)=>a+(b.amount||0),0); }
+function addWish(status){
+  const inp=document.getElementById('wishInput'); const v=inp.value.trim(); if(!v) return;
+  const amount=normalizeAmount(v); if(amount==null){ alert('금액도 같이 적어줘! (예: 조명 키링 15000)'); return; }
+  const item=stripAmount(v.replace(DATE_TOKEN_RE,' '))||'위시템';
+  const w={id:Date.now()+Math.random(), item, amount, addedDate:ymd(), status:'waiting'};
+  if(status==='resisted'){ w.status='resisted'; w.resistDate=ymd(); reactPet('happy',1800); }
+  S.wish.push(w); inp.value=''; save(); renderWish(); renderSavingCard();
+}
+function wishBuy(w){
+  const m=matchCategory(w.item);
+  S.tx.push({id:Date.now()+Math.random(), date:ymd(), type:'expense', amount:w.amount, catId:m.catId, sub:m.sub, item:w.item, raw:w.item});
+  w.status='bought'; w.boughtDate=ymd();
+  save(); rebalanceBudgets()&&save(); renderAll();
+  judgeAndShow([{item:w.item, amount:w.amount, catId:m.catId}]);
+}
+function wishResist(w){ w.status='resisted'; w.resistDate=ymd(); save(); reactPet('happy',1800); renderWish(); renderSavingCard(); }
+function renderWish(){
+  const el=document.getElementById('wishList'); if(!el) return; el.innerHTML='';
+  const waiting=S.wish.filter(w=>w.status==='waiting').sort((a,b)=>a.addedDate.localeCompare(b.addedDate));
+  waiting.forEach(w=>{
+    const d=daysBetween(w.addedDate, ymd());
+    const ready=d>=3;
+    const row=document.createElement('div'); row.className='wishrow fadein';
+    row.innerHTML=`<div class="wishtop"><span class="wishname">${escapeHtml(w.item)} · ${won(w.amount)}</span><span class="wishday ${ready?'ready':''}">D+${d}</span></div>`
+      +(ready?`<div class="wishask">3일 지났어! 아직도 갖고 싶어?</div>`:'');
+    const btns=document.createElement('div'); btns.className='wishbtns';
+    const buy=document.createElement('button'); buy.className='wbtn buy'; buy.textContent=ready?'응, 살래':'지금 살래';
+    buy.onclick=()=>{ if(!ready&&!confirm('아직 '+(3-d)+'일 안 지났어! 그래도 살래?')) return; wishBuy(w); };
+    const res=document.createElement('button'); res.className='wbtn res'; res.textContent='참을래 ★';
+    res.onclick=()=>wishResist(w);
+    const del=document.createElement('button'); del.className='wbtn'; del.textContent='\u2715';
+    del.onclick=()=>{ S.wish=S.wish.filter(x=>x.id!==w.id); save(); renderWish(); };
+    btns.appendChild(buy); btns.appendChild(res); btns.appendChild(del); row.appendChild(btns);
+    el.appendChild(row);
+  });
+}
+
+/* ============================================================
+   PURCHASE JUDGMENT — 칭찬/혼내기
+   ============================================================ */
+function judgePurchases(items){
+  let worst=null;
+  items.forEach(it=>{
+    const c=S.categories.find(x=>x.id===it.catId); if(!c) return;
+    const bud=c.budget||0;
+    const mLeft=bud-spentByCat(c.id,'month');           /* 저장 후 기준 */
+    const wAllow=bud*7/daysInMonth();
+    let v=null;
+    if(bud>0&&mLeft<0){
+      v={sev:3,msg:`${it.item}... ${c.name} 예산 벌써 넘었잖아 (>_<) 솔직히 이건 안 샀어야 했어. 이번 달 ${c.name}는 여기서 스톱!`};
+    }else if(bud>0&&it.amount>wAllow){
+      v={sev:2,msg:`${it.item} ${won(it.amount)}... 이건 줄였어도 됐을 것 같은데? (._.) 다음엔 하지 말자! (한 주 ${c.name} 몫이 ${won(wAllow)}인데 한 번에 다 썼어)`};
+    }else{
+      const tok=(it.item||'').split(/\s+/).map(x=>x.replace(/[^가-힣a-zA-Z]/g,'')).filter(x=>x.length>=2)[0];
+      if(tok){ const cnt=S.tx.filter(t=>t.type==='expense'&&isThisMonth(t.date)&&(t.item||'').includes(tok)).length;
+        if(cnt>=3) v={sev:1,msg:`또 ${tok}이야? 이번 달만 ${cnt}번째... (._.) 좋아하는 건 알겠는데 반만 줄여보자!`}; }
+    }
+    if(!v) v={sev:0,msg:null};
+    if(!worst||v.sev>worst.sev) worst=v;
+  });
+  return worst;
+}
+function judgeAndShow(items){
+  if(!items.length) return;
+  const slot=document.getElementById('previewSlot'); if(!slot) return;
+  const v=judgePurchases(items);
+  const name=escapeHtml(S.settings.petName||'돈이');
+  if(v&&v.sev>=1){
+    slot.innerHTML=`<div class="askans scold fadein"><b>${name}</b> : ${escapeHtml(v.msg)}</div>`;
+    reactPet(v.sev>=3?'sick':'worried',2600);
+  }else{
+    const st=computeStatus();
+    const praise = st.ratio<1
+      ? `기록 완료! 합리적인 소비였어 (^-^) 오늘 ${won(Math.max(0,st.todaySafe-st.spentToday))} 더 쓸 수 있어.`
+      : `기록 완료! 나쁘지 않았어. 근데 이번 달 페이스가 좀 빠르니까 내일은 살살 가자 ★`;
+    slot.innerHTML=`<div class="askans praise fadein"><b>${name}</b> : ${escapeHtml(praise)}</div>`;
+  }
+}
+
+/* ============================================================
+   WEEKLY & MONTHLY REPORTS
+   ============================================================ */
+function monthStats(ymKey){
+  const tx=S.tx.filter(t=>t.type==='expense'&&t.date.slice(0,7)===ymKey);
+  const total=tx.reduce((a,b)=>a+b.amount,0);
+  const byCat={}; tx.forEach(t=>{ byCat[t.catId]=(byCat[t.catId]||0)+t.amount; });
+  const days=new Set(tx.map(t=>t.date));
+  return {total, byCat, spendDays:days.size, txCount:tx.length};
+}
+function renderReports(){
+  const slot=document.getElementById('reportSlot'); if(!slot) return; slot.innerHTML='';
+  S.flags=S.flags||{}; S.wish=S.wish||[];
+  renderWeeklyReport(slot);
+  renderMonthlyReport(slot);
+}
+function weekKeyStr(){ const [mon]=weekRange(); return ymd(mon); }
+function renderWeeklyReport(slot){
+  const day=now().getDay();
+  if(day!==0) return;                                     /* 일요일에만 */
+  if(S.flags.weeklyDismissed===weekKeyStr()) return;
+  const dim=daysInMonth();
+  const wtx=S.tx.filter(t=>t.type==='expense'&&inRange(t.date,'week'));
+  if(!wtx.length&&!S.tx.length) return;
+  const wSpent=wtx.reduce((a,b)=>a+b.amount,0);
+  const wAllow=totalBudget()*7/dim;
+  const st=computeStatus();
+  /* 이번 주 무지출 일수 */
+  const [mon]=weekRange(); let noSpend=0;
+  for(let i=0;i<7;i++){ const d=new Date(mon); d.setDate(mon.getDate()+i); if(d>now()) break;
+    if(!wtx.some(t=>t.date===ymd(d))) noSpend++; }
+  const best=[...st.cats].sort((a,b)=>b.weekLeft-a.weekLeft)[0];
+  const worstW=[...st.cats].filter(x=>x.weekLeft<0).sort((a,b)=>a.weekLeft-b.weekLeft)[0];
+  const win=document.createElement('div'); win.className='win report fadein pix'; win.style.boxShadow='4px 4px 0 rgba(43,47,82,.25)';
+  win.innerHTML=`<div class="winhead">주간 리포트 <span class="sub">WEEKLY</span></div>`;
+  const body=document.createElement('div'); body.className='winbody';
+  body.innerHTML=
+    `<div class="rline"><span class="rico">\u2192</span><span>이번 주 지출 <b>${won(wSpent)}</b> / 주 예산 ${won(wAllow)} ${wSpent<=wAllow?'— 지켰어! ★':'— '+won(wSpent-wAllow)+' 초과 (>_<)'}</span></div>`+
+    `<div class="rline"><span class="rico">\u2605</span><span>칭찬 : ${noSpend>0?`무지출 ${noSpend}일 해냈어!`:(best?`${best.c.name} 잘 아꼈어 (${won(Math.max(0,best.weekLeft))} 남김)`:'기록 꾸준히 한 것만도 대단해')}</span></div>`+
+    (worstW?`<div class="rline"><span class="rico">\u25B2</span><span>아쉬움 : ${worstW.c.name} ${won(-worstW.weekLeft)} 초과했어</span></div>`:'')+
+    `<div class="rline"><span class="rico">\u25C6</span><span>다음 주 목표 : ${worstW?`${worstW.c.name} 하루 ${won((worstW.c.budget||0)/dim)} 안으로!`:'이 페이스 그대로 유지!'}</span></div>`;
+  const cl=document.createElement('button'); cl.className='coachbtn rclose'; cl.textContent='확인 (닫기)';
+  cl.onclick=()=>{ S.flags.weeklyDismissed=weekKeyStr(); save(); renderReports(); };
+  body.appendChild(cl); win.appendChild(body); slot.appendChild(win);
+}
+function renderMonthlyReport(slot){
+  const dom=now().getDate(), dim=daysInMonth();
+  const isEnd=dom>=dim, isStart=dom<=2;
+  if(!isEnd&&!isStart) return;
+  let ty, tm;
+  if(isEnd){ ty=now().getFullYear(); tm=now().getMonth(); }
+  else{ const p=new Date(now().getFullYear(), now().getMonth()-1, 1); ty=p.getFullYear(); tm=p.getMonth(); }
+  const key=ty+'-'+String(tm+1).padStart(2,'0');
+  if(S.flags.monthlyDismissed===key) return;
+  const ms=monthStats(key); if(ms.txCount===0) return;
+  const pot=S.settings.totalPot||totalBudget();
+  const tdim=new Date(ty,tm+1,0).getDate();
+  const noSpend=Math.max(0, tdim-ms.spendDays);
+  const topId=Object.keys(ms.byCat).sort((a,b)=>ms.byCat[b]-ms.byCat[a])[0];
+  const topC=S.categories.find(c=>c.id===topId);
+  const saved=S.wish.filter(w=>w.status==='resisted'&&(w.resistDate||'').slice(0,7)===key).reduce((a,b)=>a+b.amount,0);
+  const win=document.createElement('div'); win.className='win report fadein pix'; win.style.boxShadow='4px 4px 0 rgba(43,47,82,.25)';
+  win.innerHTML=`<div class="winhead">${tm+1}월 정산 <span class="sub">MONTHLY</span></div>`;
+  const body=document.createElement('div'); body.className='winbody';
+  body.innerHTML=
+    `<div class="rline"><span class="rico">\u2192</span><span>총 지출 <b>${won(ms.total)}</b> / 예산 ${won(pot)} ${ms.total<=pot?'— 성공! ★★':'— '+won(ms.total-pot)+' 초과'}</span></div>`+
+    `<div class="rline"><span class="rico">\u2605</span><span>무지출 ${noSpend}일${saved>0?` · 참아서 아낀 돈 ${won(saved)}`:''}</span></div>`+
+    (topC?`<div class="rline"><span class="rico">\u25CF</span><span>가장 많이 쓴 곳 : ${topC.name} (${won(ms.byCat[topId])})</span></div>`:'')+
+    `<div class="rline"><span class="rico">\u25C6</span><span>${ms.total<=pot?'아낀 돈은 저금으로 옮기면 진짜 네 돈이 돼!':'다음 달 예산을 현실에 맞게 다시 잡아보자'}</span></div>`;
+  const btns=document.createElement('div'); btns.className='wishbtns';
+  const sug=document.createElement('button'); sug.className='wbtn buy'; sug.textContent='다음 달 예산 제안 받기';
+  sug.onclick=()=>suggestNextBudget(key);
+  const cl=document.createElement('button'); cl.className='wbtn'; cl.textContent='닫기';
+  cl.onclick=()=>{ S.flags.monthlyDismissed=key; save(); renderReports(); };
+  btns.appendChild(sug); btns.appendChild(cl); body.appendChild(btns);
+  win.appendChild(body); slot.appendChild(win);
+}
+/* 실제 소비 패턴 50% + 기존 한도 50% 블렌드로 다음 달 한도 제안 */
+function suggestNextBudget(ymKey){
+  const ms=monthStats(ymKey);
+  const pot=S.settings.totalPot||totalBudget();
+  const cats=S.categories.filter(c=>(c.budget||0)>0);
+  let raw=cats.map(c=>{
+    const actual=ms.byCat[c.id]||0;
+    return Math.max(5000, Math.round((c.budget*0.5+actual*0.5)/1000)*1000);
+  });
+  const sum=raw.reduce((a,b)=>a+b,0);
+  raw=raw.map(v=>Math.max(1000,Math.round(v*pot/sum/500)*500));
+  let diff=pot-raw.reduce((a,b)=>a+b,0);
+  if(diff!==0){ const i=raw.indexOf(Math.max(...raw)); raw[i]+=diff; }
+  const lines=cats.map((c,i)=>`${c.name} : ${won(c.budget)} \u2192 ${won(raw[i])}`).join('\n');
+  if(!confirm('지난 실제 소비를 반영한 다음 달 예산이야.\n(총액 '+won(pot)+' 유지)\n\n'+lines+'\n\n이걸로 바꿀까?')) return;
+  cats.forEach((c,i)=>{ c.budget=raw[i]; });
+  save(); renderAll(); reactPet('happy');
+}
+
 document.getElementById('addBtn').onclick=handleAdd;
 document.getElementById('quickInput').addEventListener('keydown',e=>{ if(e.key==='Enter') handleAdd(); });
+document.getElementById('askBtn').onclick=handleAsk;
+document.getElementById('askInput').addEventListener('keydown',e=>{ if(e.key==='Enter') handleAsk(); });
+document.getElementById('wishAddBtn').onclick=()=>addWish('waiting');
+document.getElementById('resistBtn').onclick=()=>addWish('resisted');
+document.getElementById('wishInput').addEventListener('keydown',e=>{ if(e.key==='Enter') addWish('waiting'); });
 document.getElementById('setPetName').onchange=e=>{ S.settings.petName=e.target.value||'돈이'; save(); renderPet(); };
 document.getElementById('setApiKey').onchange=e=>{ S.settings.apiKey=e.target.value.trim(); save(); };
 document.getElementById('aiDesignBtn').onclick=aiDesignCategories;
