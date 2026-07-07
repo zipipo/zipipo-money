@@ -230,6 +230,7 @@
     <div id="coachSlot"></div>
     <div id="reportSlot"></div>
     <div id="suggestSlot"></div>
+    <div id="recurringSlot"></div>
 
     <div class="qbox pix">
       <div class="qlabel">&#9654; 그냥 편하게 적어줘</div>
@@ -237,11 +238,14 @@
       <div class="row" style="margin-top:8px;">
         <button class="btn" id="addBtn">기록하기</button>
         <button class="btn cream" id="micBtn" style="flex:0 0 54px;">음성</button>
+        <button class="btn cream" id="receiptBtn" style="flex:0 0 54px;">사진</button>
       </div>
+      <input type="file" id="receiptFile" accept="image/*" capture="environment" style="display:none;">
       <div class="qexam">
         · 여러 개 : <b>커피 4500, 다이소 청소용품 5000</b><br>
         · 날짜 : <b>7/1 점심 8000  7/3 버스 1450</b> 처럼 적으면 날짜별로 정리돼<br>
-        · 수입·저금도 그냥 적어 : <b>용돈 받음 20만</b> / <b>청년도약 1만 넣었어</b>
+        · 수입·저금도 그냥 적어 : <b>용돈 받음 20만</b> / <b>청년도약 1만 넣었어</b><br>
+        · 영수증 사진 찍어도 돼 (API 키 필요)
       </div>
       <div id="previewSlot"></div>
     </div>
@@ -316,6 +320,8 @@
       <div class="muted tiny" style="margin-top:6px;">내 지출 기록을 보고 Gemini가 카테고리와 한도를 새로 짜줘요 (API 키 필요)</div>
       <button class="btn mint" id="aiReclassifyBtn" style="width:100%; margin-top:8px;">AI로 지출 내역 다시 분류</button>
       <div class="muted tiny" style="margin-top:6px;">카테고리·한도는 그대로 두고, 지금 있는 지출 항목들만 지금 카테고리에 맞게 Gemini가 하나씩 다시 배정해요 (API 키 필요)</div>
+      <button class="btn cream" id="undoAiBtn" style="width:100%; margin-top:8px; display:none;"></button>
+      <div class="muted tiny" style="margin-top:6px;">되돌리기는 이 화면을 새로고침하기 전까지만 가능해요 (기기에 저장은 안 돼요)</div>
       <div id="catEditList" style="margin-top:10px;"></div>
       <div class="row" style="margin-top:6px;">
         <input id="newCatName" placeholder="새 카테고리">
@@ -646,6 +652,14 @@ function hpBar(ratio){ // remaining budget as HP stars ****
 
 function generateInsights(st){
   const ins=[]; const hasHistory=st.spent>0||S.tx.length>0;
+  st.cats.forEach(x=>{
+    if(x.budget<=0) return;
+    const r=x.spent/x.budget;
+    if(r>=1) ins.push({icon:'▲',sev:3,score:96,short:`${x.c.name} 예산 다 썼어!`,
+      text:`${x.c.name} 벌써 ${won(x.spent)} 써서 한도(${won(x.budget)})를 넘었어 (>_<) 이번 달은 ${x.c.name} 여기서 스톱!`});
+    else if(r>=0.8) ins.push({icon:'▲',sev:2,score:74,short:`${x.c.name} ${Math.round(r*100)}% 썼어`,
+      text:`${x.c.name} 벌써 ${Math.round(r*100)}% 썼어(${won(x.spent)}/${won(x.budget)}). 남은 한도 ${won(x.left)} 아껴 쓰자!`});
+  });
   if(st.spent>0&&st.dom>=2){
     if(st.projectedOver>st.budget*0.02){
       ins.push({icon:'\u25B2',sev:3,score:92,short:`이 속도면 월말 ${wonShort(st.projectedOver)} 초과 (>_<)`,
@@ -787,6 +801,37 @@ function renderSuggest(){ const slot=document.getElementById('suggestSlot'); slo
     save(); renderAll(); reactPet('happy'); };
   div.appendChild(btn); slot.appendChild(div);
 }
+/* ---------- recurring/subscription detection ---------- */
+function detectRecurring(){
+  const exp=S.tx.filter(t=>t.type==='expense'&&(t.item||'').trim());
+  const groups={};
+  exp.forEach(t=>{ const key=t.item.trim().toLowerCase(); (groups[key]=groups[key]||[]).push(t); });
+  const found=[];
+  for(const key in groups){
+    const arr=groups[key]; if(arr.length<2) continue;
+    const months=new Set(arr.map(t=>t.date.slice(0,7))); if(months.size<2) continue;
+    const amounts=arr.map(t=>t.amount), avg=amounts.reduce((a,b)=>a+b,0)/amounts.length;
+    if(!amounts.every(a=>Math.abs(a-avg)<=Math.max(500,avg*0.15))) continue;
+    found.push({item:arr[arr.length-1].item, amount:Math.round(avg), months:months.size});
+  }
+  return found.sort((a,b)=>b.months-a.months||b.amount-a.amount);
+}
+function renderRecurring(){
+  const slot=document.getElementById('recurringSlot'); if(!slot) return; slot.innerHTML='';
+  S.flags=S.flags||{};
+  if(S.flags.recurringDismissedAt && Date.now()-S.flags.recurringDismissedAt<7*86400000) return;
+  const found=detectRecurring(); if(!found.length) return;
+  const top=found[0];
+  const div=document.createElement('div'); div.className='banner pix fadein';
+  div.innerHTML=`◆ "<b>${escapeHtml(top.item)}</b>" 매달 비슷하게(${won(top.amount)}) ${top.months}개월째 나가고 있어. 정기 결제인 것 같아!`;
+  const row=document.createElement('div'); row.className='row'; row.style.marginTop='8px';
+  const ok=document.createElement('button'); ok.className='btn'; ok.textContent='기억해둘게';
+  ok.onclick=()=>{ S.flags.recurringDismissedAt=Date.now(); save(); renderRecurring();
+    alert(`'${top.item}' 매달 약 ${won(top.amount)} 나가는 걸로 기억해둘게. 예산 짤 때 참고할게 ★`); };
+  const close=document.createElement('button'); close.className='btn cream'; close.textContent='닫기';
+  close.onclick=()=>{ S.flags.recurringDismissedAt=Date.now(); save(); renderRecurring(); };
+  row.appendChild(ok); row.appendChild(close); div.appendChild(row); slot.appendChild(div);
+}
 function uncategorizedSuggestion(){ const etc=S.tx.filter(t=>t.type==='expense'&&t.catId==='etc'&&isThisMonth(t.date)); if(etc.length<2) return null;
   const freq={}; etc.forEach(t=>{ (t.item||'').split(/\s+/).forEach(tok=>{ tok=tok.replace(/[^가-힣a-zA-Z]/g,''); if(tok.length>=2) freq[tok]=(freq[tok]||0)+1; }); });
   let best=null; for(const k in freq){ if(freq[k]>=2&&(!best||freq[k]>freq[best])) best=k; }
@@ -839,6 +884,7 @@ function recategorize(t){ const pick=prompt(`"${t.item}" 카테고리 바꾸기\
 
 function renderSettings(){ document.getElementById('setPetName').value=S.settings.petName||''; document.getElementById('setApiKey').value=S.settings.apiKey||'';
   const potInp=document.getElementById('setPot'); if(potInp) potInp.value=S.settings.totalPot||totalBudget();
+  updateUndoBtn();
   const tg=document.getElementById('rebalToggle');
   if(tg){ const on=S.settings.autoRebalance!==false; tg.textContent=on?'ON':'OFF'; tg.style.background=on?'var(--accent)':'var(--paper)'; }
   const el=document.getElementById('catEditList'); el.innerHTML='';
@@ -928,7 +974,7 @@ function showDayDetail(ds,amt){
   alert(fmtDay(ds)+' 지출 '+won(amt)+'\n\n'+list.map(t=>{const c=S.categories.find(x=>x.id===t.catId);return `· ${t.item||'지출'} ${won(t.amount)} (${c?c.name:'미분류'})`;}).join('\n'));
 }
 
-function renderAll(){ renderPet(); renderStats(); renderCoach(); renderReports(); renderSuggest(); renderBudget(); renderHistory(); renderCalendar(); renderSettings(); renderSavingCard(); renderWish(); }
+function renderAll(){ renderPet(); renderStats(); renderCoach(); renderReports(); renderSuggest(); renderRecurring(); renderBudget(); renderHistory(); renderCalendar(); renderSettings(); renderSavingCard(); renderWish(); }
 
 /* ---------- add flow ---------- */
 async function handleAdd(){ const raw=document.getElementById('quickInput').value.trim(); if(!raw) return;
@@ -970,12 +1016,49 @@ function showPreview(items,raw){ const slot=document.getElementById('previewSlot
   noB.onclick=()=>{ slot.innerHTML=''; };
   btnRow.appendChild(okB); btnRow.appendChild(noB); box.appendChild(btnRow); slot.appendChild(box);
 }
+/* ---------- receipt photo OCR (Gemini Vision) ---------- */
+function fileToBase64(file){ return new Promise((res,rej)=>{ const r=new FileReader();
+  r.onload=()=>res(String(r.result).split(',')[1]); r.onerror=rej; r.readAsDataURL(file); }); }
+async function handleReceipt(file){
+  const key=S.settings.apiKey&&S.settings.apiKey.trim();
+  if(!key){ alert('영수증 사진 인식은 설정에 Google API 키를 먼저 넣어야 해!'); return; }
+  const btn=document.getElementById('receiptBtn'); btn.disabled=true; const old=btn.textContent; btn.textContent='읽는중';
+  const slot=document.getElementById('previewSlot');
+  slot.innerHTML='<div class="preview fadein"><div class="tiny">... 돈이가 영수증 읽는 중</div></div>';
+  try{
+    const b64=await fileToBase64(file);
+    const cats=S.categories.map(c=>`${c.id}:${c.name}`).join(', ');
+    const prompt=`이 영수증 사진에서 지출 항목을 뽑아줘. 설명·마크다운 없이 JSON 배열만 반환해.\n카테고리 후보: ${cats}. 애매하면 catId를 "etc"로.\n각 원소: {"item":"짧은이름","amount":정수원,"catId":"위 id"}\n항목이 많으면 비슷한 것끼리 합쳐도 되고, 개별로 뽑아도 돼 — 합계가 영수증 총액과 얼추 맞게만 해줘.`;
+    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt},{inline_data:{mime_type:file.type||'image/jpeg',data:b64}}]}]})});
+    const j=await r.json(); let txt=j?.candidates?.[0]?.content?.parts?.[0]?.text||''; txt=txt.replace(/```json|```/g,'').trim();
+    const arr=JSON.parse(txt);
+    if(!Array.isArray(arr)||!arr.length) throw new Error('empty');
+    const validIds=new Set(S.categories.map(c=>c.id));
+    const items=arr.map(o=>({type:'expense',amount:parseInt(o.amount)||0,item:String(o.item||'지출').slice(0,30),
+      date:ymd(),catId:validIds.has(o.catId)?o.catId:'etc',sub:null,raw:String(o.item||'')})).filter(i=>i.amount>0);
+    if(!items.length) throw new Error('no items');
+    showPreview(items,'영수증');
+  }catch(e){ console.warn('receipt fail',e); slot.innerHTML=''; alert('영수증을 잘 못 읽었어. 다시 찍어보거나 직접 적어줄래?'); }
+  finally{ btn.disabled=false; btn.textContent=old; }
+}
+
 function quickAmountPrompt(kind){ const label=kind==='income'?'들어온 돈':'저금한 돈';
   const item=prompt(`${label} 내용 (예: ${kind==='income'?'알바비':'청년도약계좌'})`,''); if(item===null) return;
   const amtStr=prompt('금액(원)',''); const amount=normalizeAmount(amtStr||'')||(parseInt((amtStr||'').replace(/[^\d]/g,''))||0); if(!amount) return;
   S.tx.push({id:Date.now()+Math.random(),date:ymd(),type:kind,amount,catId:null,sub:null,item:item||label,raw:''}); save(); reactPet('happy'); renderAll(); }
 
 /* ---------- events ---------- */
+/* ---------- undo snapshot for AI actions (in-memory only, lost on reload) ---------- */
+let lastSnapshot=null;
+function snapshotState(label){ lastSnapshot={label, categories:JSON.parse(JSON.stringify(S.categories)), tx:JSON.parse(JSON.stringify(S.tx)), learned:JSON.parse(JSON.stringify(S.learned))}; updateUndoBtn(); }
+function undoLastAI(){ if(!lastSnapshot) return;
+  if(!confirm(`"${lastSnapshot.label}" 실행 전으로 되돌릴까?`)) return;
+  S.categories=lastSnapshot.categories; S.tx=lastSnapshot.tx; S.learned=lastSnapshot.learned;
+  lastSnapshot=null; save(); renderAll(); reactPet('happy'); }
+function updateUndoBtn(){ const b=document.getElementById('undoAiBtn'); if(!b) return;
+  b.style.display=lastSnapshot?'block':'none'; b.textContent='↺ "'+(lastSnapshot?lastSnapshot.label:'')+'" 되돌리기'; }
+
 /* ---------- AI category design (Gemini) ---------- */
 async function aiDesignCategories(){
   const key=S.settings.apiKey&&S.settings.apiKey.trim();
@@ -1008,6 +1091,7 @@ async function aiDesignCategories(){
     const sum=cats.reduce((a,c)=>a+c.budget,0); if(sum>0&&sum!==pot) cats[0].budget+=pot-sum;
     cats.push({id:'etc',name:'기타(미분류)',sym:'\u25C7',budget:0,subs:[],keywords:[]});
     if(!confirm('AI가 짠 새 카테고리로 바꿀까?\n\n'+cats.filter(c=>c.budget>0).map(c=>`${c.name} ${won(c.budget)}`).join('\n')+'\n\n(기존 기록은 새 카테고리로 자동 재분류돼)')) return;
+    snapshotState('AI 카테고리·한도 자동 설계');
     /* 기존 카테고리 이름 기억해두기 (재분류 안전장치용) */
     const oldName={}; S.categories.forEach(c=>{ oldName[c.id]=(c.name||'').replace(/\(.*?\)/g,'').trim(); });
     S.categories=cats; S.learned={};
@@ -1036,6 +1120,7 @@ async function aiReclassifyExpenses(){
   if(!catList.length){ alert('카테고리가 없어. 먼저 카테고리를 만들어줘.'); return; }
   const btn=document.getElementById('aiReclassifyBtn');
   btn.disabled=true; const old=btn.textContent;
+  snapshotState('AI 지출 내역 다시 분류');
   try{
     const catNames=catList.map(c=>normCatName(c.name));
     const CHUNK=60;
@@ -1297,12 +1382,34 @@ function renderMonthlyReport(slot){
     (topC?`<div class="rline"><span class="rico">\u25CF</span><span>가장 많이 쓴 곳 : ${topC.name} (${won(ms.byCat[topId])})</span></div>`:'')+
     `<div class="rline"><span class="rico">\u25C6</span><span>${ms.total<=pot?'아낀 돈은 저금으로 옮기면 진짜 네 돈이 돼!':'다음 달 예산을 현실에 맞게 다시 잡아보자'}</span></div>`;
   const btns=document.createElement('div'); btns.className='wishbtns';
+  const aiC=document.createElement('button'); aiC.className='wbtn'; aiC.textContent='AI 총평 듣기';
+  aiC.onclick=()=>aiMonthlyComment(key,aiC);
   const sug=document.createElement('button'); sug.className='wbtn buy'; sug.textContent='다음 달 예산 제안 받기';
   sug.onclick=()=>suggestNextBudget(key);
   const cl=document.createElement('button'); cl.className='wbtn'; cl.textContent='닫기';
   cl.onclick=()=>{ S.flags.monthlyDismissed=key; save(); renderReports(); };
-  btns.appendChild(sug); btns.appendChild(cl); body.appendChild(btns);
+  btns.appendChild(aiC); btns.appendChild(sug); btns.appendChild(cl); body.appendChild(btns);
   win.appendChild(body); slot.appendChild(win);
+}
+async function aiMonthlyComment(ymKey,btn){
+  const key=S.settings.apiKey&&S.settings.apiKey.trim();
+  if(!key){ alert('설정에 Google API 키를 먼저 넣어줘!'); return; }
+  const ms=monthStats(ymKey); const pot=S.settings.totalPot||totalBudget();
+  const topId=Object.keys(ms.byCat).sort((a,b)=>ms.byCat[b]-ms.byCat[a])[0];
+  const topC=S.categories.find(c=>c.id===topId);
+  const name=S.settings.petName||'돈이';
+  const prompt=`너는 픽셀 게임 속 절약 코치 캐릭터 '${name}'야. 한국어 반말, 다정하지만 현실적으로 말해. 4문장 이내. 이모지 금지(★ (^-^) (>_<) (._.) 같은 텍스트 기호만 사용 가능).
+이번 달 정산: 총 지출 ${ms.total}원 / 예산 ${pot}원. 가장 많이 쓴 곳 : ${topC?topC.name:'없음'}${topId?' '+ms.byCat[topId]+'원':''}. 지출한 날 ${ms.spendDays}일.
+사용자에게 이번 달 총평을 해줘. 잘한 점 하나, 아쉬운 점 하나, 다음 달을 위한 구체적인 팁 하나를 자연스럽게 포함해.`;
+  btn.disabled=true; const old=btn.textContent; btn.textContent='작성중...';
+  try{
+    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});
+    const j=await r.json(); const txt=(j?.candidates?.[0]?.content?.parts?.[0]?.text||'').trim();
+    if(!txt) throw new Error('empty');
+    alert(name+' : '+txt);
+  }catch(e){ console.warn(e); alert('총평을 못 받아왔어. 다시 시도해줘!'); }
+  finally{ btn.disabled=false; btn.textContent=old; }
 }
 /* 실제 소비 패턴 50% + 기존 한도 50% 블렌드로 다음 달 한도 제안 */
 function suggestNextBudget(ymKey){
@@ -1334,6 +1441,7 @@ document.getElementById('setPetName').onchange=e=>{ S.settings.petName=e.target.
 document.getElementById('setApiKey').onchange=e=>{ S.settings.apiKey=e.target.value.trim(); save(); };
 document.getElementById('aiDesignBtn').onclick=aiDesignCategories;
 document.getElementById('aiReclassifyBtn').onclick=aiReclassifyExpenses;
+document.getElementById('undoAiBtn').onclick=undoLastAI;
 document.getElementById('rebalToggle').onclick=()=>{ S.settings.autoRebalance=!S.settings.autoRebalance; save(); renderSettings(); };
 document.getElementById('setPot').onchange=e=>{
   const v=parseInt(e.target.value.replace(/[^\d]/g,''))||0; if(v<=0){ renderSettings(); return; }
@@ -1356,6 +1464,9 @@ document.getElementById('exportBtn').onclick=()=>{ const blob=new Blob([JSON.str
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='donmagotchi_backup.json'; a.click(); };
 document.getElementById('importBtn').onclick=()=>{ const inp=document.createElement('input'); inp.type='file'; inp.accept='.json';
   inp.onchange=()=>{ const f=inp.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ try{ S=migrate(JSON.parse(r.result)); save(); renderAll(); alert('복원 완료!'); }catch(e){ alert('파일을 읽을 수 없어요'); } }; r.readAsText(f); }; inp.click(); };
+document.getElementById('receiptBtn').onclick=()=>document.getElementById('receiptFile').click();
+document.getElementById('receiptFile').onchange=()=>{ const f=document.getElementById('receiptFile').files[0];
+  document.getElementById('receiptFile').value=''; if(f) handleReceipt(f); };
 document.getElementById('micBtn').onclick=()=>{ const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){ alert('이 브라우저는 음성 입력을 지원하지 않아요'); return; } const rec=new SR(); rec.lang='ko-KR'; rec.interimResults=false;
   document.getElementById('micBtn').textContent='...'; rec.onresult=e=>{ document.getElementById('quickInput').value=e.results[0][0].transcript; document.getElementById('micBtn').textContent='음성'; handleAdd(); };
