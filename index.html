@@ -314,6 +314,8 @@
       <label class="tiny">카테고리 &amp; 한도 (원)</label>
       <button class="btn sky" id="aiDesignBtn" style="width:100%; margin-top:8px;">AI로 카테고리·한도 자동 설계</button>
       <div class="muted tiny" style="margin-top:6px;">내 지출 기록을 보고 Gemini가 카테고리와 한도를 새로 짜줘요 (API 키 필요)</div>
+      <button class="btn mint" id="aiReclassifyBtn" style="width:100%; margin-top:8px;">AI로 지출 내역 다시 분류</button>
+      <div class="muted tiny" style="margin-top:6px;">카테고리·한도는 그대로 두고, 지금 있는 지출 항목들만 지금 카테고리에 맞게 Gemini가 하나씩 다시 배정해요 (API 키 필요)</div>
       <div id="catEditList" style="margin-top:10px;"></div>
       <div class="row" style="margin-top:6px;">
         <input id="newCatName" placeholder="새 카테고리">
@@ -1023,6 +1025,49 @@ async function aiDesignCategories(){
   finally{ btn.disabled=false; btn.textContent=old; }
 }
 
+/* ---------- AI reclassify existing expenses into current categories (no category/budget changes) ---------- */
+function normCatName(s){ return String(s||'').replace(/\(.*?\)/g,'').trim(); }
+async function aiReclassifyExpenses(){
+  const key=S.settings.apiKey&&S.settings.apiKey.trim();
+  if(!key){ alert('설정에 Google API 키를 먼저 넣어줘!'); return; }
+  const items=S.tx.filter(t=>t.type==='expense');
+  if(!items.length){ alert('다시 분류할 지출 기록이 없어.'); return; }
+  const catList=S.categories.filter(c=>c.id!=='etc');
+  if(!catList.length){ alert('카테고리가 없어. 먼저 카테고리를 만들어줘.'); return; }
+  const btn=document.getElementById('aiReclassifyBtn');
+  btn.disabled=true; const old=btn.textContent;
+  try{
+    const catNames=catList.map(c=>normCatName(c.name));
+    const CHUNK=60;
+    let changed=0, failed=0;
+    for(let i=0;i<items.length;i+=CHUNK){
+      const chunk=items.slice(i,i+CHUNK);
+      btn.textContent=`분류중... (${Math.min(i+CHUNK,items.length)}/${items.length})`;
+      const list=chunk.map((t,idx)=>`${idx}. ${t.item} (${t.amount}원)`).join('\n');
+      const prompt=`아래는 한국 자취생의 지출 항목 목록이야. 각 항목을 다음 카테고리 중 하나로 분류해줘: ${catNames.join(', ')}, 기타.
+설명·마크다운 없이 JSON 배열만 반환해. 형식: [{"i":0,"cat":"식비"}]
+목록:
+${list}`;
+      try{
+        const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+          {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});
+        const j=await r.json(); let txt=j?.candidates?.[0]?.content?.parts?.[0]?.text||'';
+        txt=txt.replace(/```json|```/g,'').trim();
+        const arr=JSON.parse(txt);
+        arr.forEach(o=>{
+          const t=chunk[o.i]; if(!t) return;
+          const c=catList.find(x=>normCatName(x.name)===normCatName(o.cat));
+          const newId=c?c.id:'etc';
+          if(t.catId!==newId){ t.catId=newId; t.sub=null; changed++; }
+        });
+      }catch(e){ console.warn('reclassify chunk fail',e); failed+=chunk.length; }
+    }
+    save(); renderAll(); reactPet('happy');
+    alert(`완료! ${changed}건 다시 분류했어.`+(failed?`\n(${failed}건은 실패해서 그대로 뒀어)`:''));
+  }catch(e){ console.warn(e); alert('분류에 실패했어. API 키가 맞는지 확인해줘!'); }
+  finally{ btn.disabled=false; btn.textContent=old; }
+}
+
 /* ---------- 살까말까 상담 ---------- */
 function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function askRule(q){
@@ -1288,6 +1333,7 @@ document.getElementById('wishInput').addEventListener('keydown',e=>{ if(e.key===
 document.getElementById('setPetName').onchange=e=>{ S.settings.petName=e.target.value||'돈이'; save(); renderPet(); };
 document.getElementById('setApiKey').onchange=e=>{ S.settings.apiKey=e.target.value.trim(); save(); };
 document.getElementById('aiDesignBtn').onclick=aiDesignCategories;
+document.getElementById('aiReclassifyBtn').onclick=aiReclassifyExpenses;
 document.getElementById('rebalToggle').onclick=()=>{ S.settings.autoRebalance=!S.settings.autoRebalance; save(); renderSettings(); };
 document.getElementById('setPot').onchange=e=>{
   const v=parseInt(e.target.value.replace(/[^\d]/g,''))||0; if(v<=0){ renderSettings(); return; }
