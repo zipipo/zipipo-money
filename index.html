@@ -1012,11 +1012,9 @@ async function aiDesignCategories(){
     S.tx.forEach(t=>{ if(t.type!=='expense') return;
       const m=matchCategory(t.raw||t.item||'');
       if(m.catId!=='etc'){ t.catId=m.catId; t.sub=m.sub; return; }
-      /* 키워드로 못 찾으면: 기존 카테고리 이름과 비슷한 새 카테고리로 */
+      /* 키워드로 못 찾으면: 기존 카테고리와 이름이 정확히 같은 새 카테고리로만 재배정 (느슨한 부분일치는 엉뚱한 카테고리로 대량 오분류를 일으킴) */
       const on=oldName[t.catId]||'';
-      let f=null;
-      if(on.length>=2){ const key2=on.slice(0,2);
-        f=cats.find(c=>c.id!=='etc'&&(c.name.includes(key2)||on.includes(c.name.slice(0,2)))); }
+      const f=on?cats.find(c=>c.id!=='etc'&&c.name===on):null;
       t.catId=f?f.id:'etc'; t.sub=null;
     });
     save(); renderAll(); reactPet('happy');
