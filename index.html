@@ -238,14 +238,11 @@
       <div class="row" style="margin-top:8px;">
         <button class="btn" id="addBtn">기록하기</button>
         <button class="btn cream" id="micBtn" style="flex:0 0 54px;">음성</button>
-        <button class="btn cream" id="receiptBtn" style="flex:0 0 54px;">사진</button>
       </div>
-      <input type="file" id="receiptFile" accept="image/*" capture="environment" style="display:none;">
       <div class="qexam">
         · 여러 개 : <b>커피 4500, 다이소 청소용품 5000</b><br>
         · 날짜 : <b>7/1 점심 8000  7/3 버스 1450</b> 처럼 적으면 날짜별로 정리돼<br>
-        · 수입·저금도 그냥 적어 : <b>용돈 받음 20만</b> / <b>청년도약 1만 넣었어</b><br>
-        · 영수증 사진 찍어도 돼 (API 키 필요)
+        · 수입·저금도 그냥 적어 : <b>용돈 받음 20만</b> / <b>청년도약 1만 넣었어</b>
       </div>
       <div id="previewSlot"></div>
     </div>
@@ -317,9 +314,7 @@
     <div class="pix" style="padding:11px; margin-bottom:12px;">
       <label class="tiny">카테고리 &amp; 한도 (원)</label>
       <button class="btn sky" id="aiDesignBtn" style="width:100%; margin-top:8px;">AI로 카테고리·한도 자동 설계</button>
-      <div class="muted tiny" style="margin-top:6px;">내 지출 기록을 보고 Gemini가 카테고리와 한도를 새로 짜줘요 (API 키 필요)</div>
-      <button class="btn mint" id="aiReclassifyBtn" style="width:100%; margin-top:8px;">AI로 지출 내역 다시 분류</button>
-      <div class="muted tiny" style="margin-top:6px;">카테고리·한도는 그대로 두고, 지금 있는 지출 항목들만 지금 카테고리에 맞게 Gemini가 하나씩 다시 배정해요 (API 키 필요)</div>
+      <div class="muted tiny" style="margin-top:6px;">내 지출 기록을 보고 Gemini가 카테고리·한도를 새로 짜고, 기존 지출도 새 카테고리에 맞게 하나씩 같이 다시 분류해줘요 (API 키 필요)</div>
       <button class="btn cream" id="undoAiBtn" style="width:100%; margin-top:8px; display:none;"></button>
       <div class="muted tiny" style="margin-top:6px;">되돌리기는 이 화면을 새로고침하기 전까지만 가능해요 (기기에 저장은 안 돼요)</div>
       <div id="catEditList" style="margin-top:10px;"></div>
@@ -1016,33 +1011,6 @@ function showPreview(items,raw){ const slot=document.getElementById('previewSlot
   noB.onclick=()=>{ slot.innerHTML=''; };
   btnRow.appendChild(okB); btnRow.appendChild(noB); box.appendChild(btnRow); slot.appendChild(box);
 }
-/* ---------- receipt photo OCR (Gemini Vision) ---------- */
-function fileToBase64(file){ return new Promise((res,rej)=>{ const r=new FileReader();
-  r.onload=()=>res(String(r.result).split(',')[1]); r.onerror=rej; r.readAsDataURL(file); }); }
-async function handleReceipt(file){
-  const key=S.settings.apiKey&&S.settings.apiKey.trim();
-  if(!key){ alert('영수증 사진 인식은 설정에 Google API 키를 먼저 넣어야 해!'); return; }
-  const btn=document.getElementById('receiptBtn'); btn.disabled=true; const old=btn.textContent; btn.textContent='읽는중';
-  const slot=document.getElementById('previewSlot');
-  slot.innerHTML='<div class="preview fadein"><div class="tiny">... 돈이가 영수증 읽는 중</div></div>';
-  try{
-    const b64=await fileToBase64(file);
-    const cats=S.categories.map(c=>`${c.id}:${c.name}`).join(', ');
-    const prompt=`이 영수증 사진에서 지출 항목을 뽑아줘. 설명·마크다운 없이 JSON 배열만 반환해.\n카테고리 후보: ${cats}. 애매하면 catId를 "etc"로.\n각 원소: {"item":"짧은이름","amount":정수원,"catId":"위 id"}\n항목이 많으면 비슷한 것끼리 합쳐도 되고, 개별로 뽑아도 돼 — 합계가 영수증 총액과 얼추 맞게만 해줘.`;
-    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
-      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt},{inline_data:{mime_type:file.type||'image/jpeg',data:b64}}]}]})});
-    const j=await r.json(); let txt=j?.candidates?.[0]?.content?.parts?.[0]?.text||''; txt=txt.replace(/```json|```/g,'').trim();
-    const arr=JSON.parse(txt);
-    if(!Array.isArray(arr)||!arr.length) throw new Error('empty');
-    const validIds=new Set(S.categories.map(c=>c.id));
-    const items=arr.map(o=>({type:'expense',amount:parseInt(o.amount)||0,item:String(o.item||'지출').slice(0,30),
-      date:ymd(),catId:validIds.has(o.catId)?o.catId:'etc',sub:null,raw:String(o.item||'')})).filter(i=>i.amount>0);
-    if(!items.length) throw new Error('no items');
-    showPreview(items,'영수증');
-  }catch(e){ console.warn('receipt fail',e); slot.innerHTML=''; alert('영수증을 잘 못 읽었어. 다시 찍어보거나 직접 적어줄래?'); }
-  finally{ btn.disabled=false; btn.textContent=old; }
-}
-
 function quickAmountPrompt(kind){ const label=kind==='income'?'들어온 돈':'저금한 돈';
   const item=prompt(`${label} 내용 (예: ${kind==='income'?'알바비':'청년도약계좌'})`,''); if(item===null) return;
   const amtStr=prompt('금액(원)',''); const amount=normalizeAmount(amtStr||'')||(parseInt((amtStr||'').replace(/[^\d]/g,''))||0); if(!amount) return;
@@ -1090,67 +1058,49 @@ async function aiDesignCategories(){
     /* 합계 보정 */
     const sum=cats.reduce((a,c)=>a+c.budget,0); if(sum>0&&sum!==pot) cats[0].budget+=pot-sum;
     cats.push({id:'etc',name:'기타(미분류)',sym:'\u25C7',budget:0,subs:[],keywords:[]});
-    if(!confirm('AI가 짠 새 카테고리로 바꿀까?\n\n'+cats.filter(c=>c.budget>0).map(c=>`${c.name} ${won(c.budget)}`).join('\n')+'\n\n(기존 기록은 새 카테고리로 자동 재분류돼)')) return;
+    if(!confirm('AI가 짠 새 카테고리로 바꿀까?\n\n'+cats.filter(c=>c.budget>0).map(c=>`${c.name} ${won(c.budget)}`).join('\n')+'\n\n(기존 지출도 새 카테고리에 맞게 Gemini가 하나씩 같이 다시 분류해)')) return;
     snapshotState('AI 카테고리·한도 자동 설계');
-    /* 기존 카테고리 이름 기억해두기 (재분류 안전장치용) */
-    const oldName={}; S.categories.forEach(c=>{ oldName[c.id]=(c.name||'').replace(/\(.*?\)/g,'').trim(); });
     S.categories=cats; S.learned={};
-    S.tx.forEach(t=>{ if(t.type!=='expense') return;
-      const m=matchCategory(t.raw||t.item||'');
-      if(m.catId!=='etc'){ t.catId=m.catId; t.sub=m.sub; return; }
-      /* 키워드로 못 찾으면: 기존 카테고리와 이름이 정확히 같은 새 카테고리로만 재배정 (느슨한 부분일치는 엉뚱한 카테고리로 대량 오분류를 일으킴) */
-      const on=oldName[t.catId]||'';
-      const f=on?cats.find(c=>c.id!=='etc'&&c.name===on):null;
-      t.catId=f?f.id:'etc'; t.sub=null;
-    });
+    /* 재분류 실패해도 항상 유효한 카테고리(기타)를 가리키게 먼저 초기화 */
+    S.tx.forEach(t=>{ if(t.type==='expense') t.catId='etc'; });
+    const {changed,failed}=await classifyExpensesWithGemini(key, cats.filter(c=>c.id!=='etc'), btn, '지출 재분류중...');
     save(); renderAll(); reactPet('happy');
-    alert('완료! 예산 탭에서 새 카테고리를 확인해봐 \u2605');
+    alert(`완료! 카테고리를 새로 짜고 지출 ${changed}건을 같이 다시 분류했어.`+(failed?`\n(${failed}건은 분류 실패해서 기타로 남겨뒀어)`:'')+'\n예산 탭에서 확인해봐 \u2605');
   }catch(e){ console.warn(e); alert('설계에 실패했어. API 키가 맞는지 확인해줘!'); }
   finally{ btn.disabled=false; btn.textContent=old; }
 }
 
-/* ---------- AI reclassify existing expenses into current categories (no category/budget changes) ---------- */
+/* ---------- Gemini로 지출 항목들을 카테고리 목록에 맞게 배정 ---------- */
 function normCatName(s){ return String(s||'').replace(/\(.*?\)/g,'').trim(); }
-async function aiReclassifyExpenses(){
-  const key=S.settings.apiKey&&S.settings.apiKey.trim();
-  if(!key){ alert('설정에 Google API 키를 먼저 넣어줘!'); return; }
+async function classifyExpensesWithGemini(key, catList, btn, labelPrefix){
   const items=S.tx.filter(t=>t.type==='expense');
-  if(!items.length){ alert('다시 분류할 지출 기록이 없어.'); return; }
-  const catList=S.categories.filter(c=>c.id!=='etc');
-  if(!catList.length){ alert('카테고리가 없어. 먼저 카테고리를 만들어줘.'); return; }
-  const btn=document.getElementById('aiReclassifyBtn');
-  btn.disabled=true; const old=btn.textContent;
-  snapshotState('AI 지출 내역 다시 분류');
-  try{
-    const catNames=catList.map(c=>normCatName(c.name));
-    const CHUNK=60;
-    let changed=0, failed=0;
-    for(let i=0;i<items.length;i+=CHUNK){
-      const chunk=items.slice(i,i+CHUNK);
-      btn.textContent=`분류중... (${Math.min(i+CHUNK,items.length)}/${items.length})`;
-      const list=chunk.map((t,idx)=>`${idx}. ${t.item} (${t.amount}원)`).join('\n');
-      const prompt=`아래는 한국 자취생의 지출 항목 목록이야. 각 항목을 다음 카테고리 중 하나로 분류해줘: ${catNames.join(', ')}, 기타.
+  if(!items.length||!catList.length) return {changed:0, failed:0};
+  const catNames=catList.map(c=>normCatName(c.name));
+  const CHUNK=60;
+  let changed=0, failed=0;
+  for(let i=0;i<items.length;i+=CHUNK){
+    const chunk=items.slice(i,i+CHUNK);
+    if(btn) btn.textContent=`${labelPrefix||'분류중...'} (${Math.min(i+CHUNK,items.length)}/${items.length})`;
+    const list=chunk.map((t,idx)=>`${idx}. ${t.item} (${t.amount}원)`).join('\n');
+    const prompt=`아래는 한국 자취생의 지출 항목 목록이야. 각 항목을 다음 카테고리 중 하나로 분류해줘: ${catNames.join(', ')}, 기타.
 설명·마크다운 없이 JSON 배열만 반환해. 형식: [{"i":0,"cat":"식비"}]
 목록:
 ${list}`;
-      try{
-        const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
-          {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});
-        const j=await r.json(); let txt=j?.candidates?.[0]?.content?.parts?.[0]?.text||'';
-        txt=txt.replace(/```json|```/g,'').trim();
-        const arr=JSON.parse(txt);
-        arr.forEach(o=>{
-          const t=chunk[o.i]; if(!t) return;
-          const c=catList.find(x=>normCatName(x.name)===normCatName(o.cat));
-          const newId=c?c.id:'etc';
-          if(t.catId!==newId){ t.catId=newId; t.sub=null; changed++; }
-        });
-      }catch(e){ console.warn('reclassify chunk fail',e); failed+=chunk.length; }
-    }
-    save(); renderAll(); reactPet('happy');
-    alert(`완료! ${changed}건 다시 분류했어.`+(failed?`\n(${failed}건은 실패해서 그대로 뒀어)`:''));
-  }catch(e){ console.warn(e); alert('분류에 실패했어. API 키가 맞는지 확인해줘!'); }
-  finally{ btn.disabled=false; btn.textContent=old; }
+    try{
+      const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+        {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});
+      const j=await r.json(); let txt=j?.candidates?.[0]?.content?.parts?.[0]?.text||'';
+      txt=txt.replace(/```json|```/g,'').trim();
+      const arr=JSON.parse(txt);
+      arr.forEach(o=>{
+        const t=chunk[o.i]; if(!t) return;
+        const c=catList.find(x=>normCatName(x.name)===normCatName(o.cat));
+        const newId=c?c.id:'etc';
+        if(t.catId!==newId){ t.catId=newId; t.sub=null; changed++; }
+      });
+    }catch(e){ console.warn('reclassify chunk fail',e); failed+=chunk.length; }
+  }
+  return {changed,failed};
 }
 
 /* ---------- 살까말까 상담 ---------- */
@@ -1440,7 +1390,6 @@ document.getElementById('wishInput').addEventListener('keydown',e=>{ if(e.key===
 document.getElementById('setPetName').onchange=e=>{ S.settings.petName=e.target.value||'돈이'; save(); renderPet(); };
 document.getElementById('setApiKey').onchange=e=>{ S.settings.apiKey=e.target.value.trim(); save(); };
 document.getElementById('aiDesignBtn').onclick=aiDesignCategories;
-document.getElementById('aiReclassifyBtn').onclick=aiReclassifyExpenses;
 document.getElementById('undoAiBtn').onclick=undoLastAI;
 document.getElementById('rebalToggle').onclick=()=>{ S.settings.autoRebalance=!S.settings.autoRebalance; save(); renderSettings(); };
 document.getElementById('setPot').onchange=e=>{
@@ -1464,9 +1413,6 @@ document.getElementById('exportBtn').onclick=()=>{ const blob=new Blob([JSON.str
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='donmagotchi_backup.json'; a.click(); };
 document.getElementById('importBtn').onclick=()=>{ const inp=document.createElement('input'); inp.type='file'; inp.accept='.json';
   inp.onchange=()=>{ const f=inp.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ try{ S=migrate(JSON.parse(r.result)); save(); renderAll(); alert('복원 완료!'); }catch(e){ alert('파일을 읽을 수 없어요'); } }; r.readAsText(f); }; inp.click(); };
-document.getElementById('receiptBtn').onclick=()=>document.getElementById('receiptFile').click();
-document.getElementById('receiptFile').onchange=()=>{ const f=document.getElementById('receiptFile').files[0];
-  document.getElementById('receiptFile').value=''; if(f) handleReceipt(f); };
 document.getElementById('micBtn').onclick=()=>{ const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){ alert('이 브라우저는 음성 입력을 지원하지 않아요'); return; } const rec=new SR(); rec.lang='ko-KR'; rec.interimResults=false;
   document.getElementById('micBtn').textContent='...'; rec.onresult=e=>{ document.getElementById('quickInput').value=e.results[0][0].transcript; document.getElementById('micBtn').textContent='음성'; handleAdd(); };
